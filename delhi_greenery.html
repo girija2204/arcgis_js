@@ -1,0 +1,156 @@
+  <html>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="initial-scale=1,maximum-scale=1,user-scalable=no"
+    />
+    
+    <title>Clipping</title>
+
+    <link
+      rel="stylesheet"
+      href="https://js.arcgis.com/4.16/esri/themes/light/main.css"
+    />
+    <script src="https://js.arcgis.com/4.16/"></script>
+
+    <style>
+      html,
+      body,
+      #viewDiv {
+        padding: 0;
+        margin: 0;
+        height: 100%;
+        width: 100%;
+      }
+      #timeSlider {
+        position: absolute;
+        left: 100px;
+        right: 100px;
+        bottom: 20px;
+      }
+    </style>
+    <script>
+      require([
+        "esri/Map",
+        "esri/views/MapView",
+        "esri/layers/ImageryLayer",
+        "esri/layers/FeatureLayer",
+        "esri/layers/support/RasterFunction",
+        "esri/widgets/TimeSlider"
+      ], function(Map, MapView, ImageryLayer, FeatureLayer, RasterFunction, TimeSlider){
+        
+        var rasterFunctionNDVI = new RasterFunction({
+          functionName: "NDVI Raw"
+        });
+        
+        function zoomToLayer(layer){
+          return layer.queryExtent().then(function(response){
+            mapView.goTo(response.extent).catch(function (error) {
+              if (error.name != "AbortError") {
+                console.error(error);
+              }
+            });
+          });
+        }
+        
+        var boundariesFeatureLayer = new FeatureLayer({
+          url: "https://services.arcgis.com/P3ePLMYs2RVChkJx/arcgis/rest/services/IND_Boundaries_2018/FeatureServer/1",
+          definitionExpression: "NAME = 'NCT of Delhi'", // only colors delhi part
+          opacity: 0.1,
+          spatialReference: { wkid: 4326 }
+        });
+        
+        var map = new Map({
+          basemap: 'dark-gray',
+          layers: [boundariesFeatureLayer]
+        });
+        
+        var mapView = new MapView({
+          container: "viewDiv",
+          map: map,
+          zoom: 10
+        });
+        
+        boundariesFeatureLayer.when(function(){
+          zoomToLayer(boundariesFeatureLayer); // zooms in to the feature layer
+          mapView.extent = boundariesFeatureLayer.fullExtent; // view extent is limited to feature layer's extent
+        });
+        
+        var delhi_geom;
+        boundariesFeatureLayer.queryFeatures().then(function(results){
+          delhi_geom = results.features[0].geometry;
+          delhi_geom.spatialReference = {wkid: 4326};
+          var clipFunction = new RasterFunction({
+            functionName: "Clip",
+            functionArguments: {
+              "ClippingGeometry" : {
+                "rings" : delhi_geom.rings, 
+                "spatialReference" : {'wkid': 4326}
+              },
+              "ClippingType": 1,
+              raster: rasterFunctionNDVI
+            }
+          });
+          
+          var remapRF = new RasterFunction({
+            functionName: "Remap",
+            functionArguments: {
+              inputRanges: [0.4, 0.5, 0.5, 1],
+              outputValues: [1, 2],
+              raster: clipFunction
+            }
+          });
+
+          var colorRF = new RasterFunction({
+            functionName: "Colormap",
+            functionArguments: {
+              colormap: [
+                [1, 124, 252, 0],
+                [2, 0, 102, 0]
+              ],
+              raster: remapRF
+            },
+            outputPixelType: "U8"
+          });
+          var landsatImageryLyer = new ImageryLayer({
+            opacity: 1,
+            url: "https://landsat2.arcgis.com/arcgis/rest/services/Landsat/MS/ImageServer",
+            renderingRule: colorRF
+          });
+          map.layers.add(landsatImageryLyer);
+        
+          const timeSlider = new TimeSlider({
+            container: "timeSlider",
+            playRate: 500,
+            mode: "time-window",
+            view: mapView,
+            stops: {
+              interval: {
+                value: 1,
+                unit: "months"
+              },
+              timeExtent: {
+                start: new Date(2016, 5, 1),
+                end: new Date(2019, 5, 1)
+             }
+            },
+            values:[
+              new Date(2016, 5, 1),
+              new Date(2016, 6, 1)
+            ]
+          });
+          mapView.whenLayerView(landsatImageryLyer).then(function (lv) {
+            timeSlider.fullTimeExtent = timeSlider.stops.timeExtent;
+          });
+          mapView.ui.add(timeSlider, "manual");
+        });
+      });
+    </script>
+  </head>
+
+  <body>
+    <div id="viewDiv"></div>
+    <div id="timeSlider"></div>
+  </body>
+</html>
